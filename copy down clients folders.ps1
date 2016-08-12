@@ -1,130 +1,133 @@
-﻿# Creator: Laurence F. Adams III 
+﻿# Author: Laurence F. Adams III 
 # Febuary 23 2016
 # Large Contributor and initial author: Bryan Kelley 
+# Revised on March 24 2016 - by LA because of error logging issues.
+# Revised on August 09 2016 - by LA 
+#                           - 1. We want to make sure we still create the appropriate directories, even if a user has not verified their account.
+#                           - 2. We want to introduce a regex for the Company logic, to take in account whitespaces and typos.
 
 # This makes sure that we go to FileShare, go to a specific folder to grab all sub folders (affiliates client records), bring the folders down to a temporary folder, where we backup and move the files to the appropriate location.
 # We repeat these steps for another sub folder (Administrative).
 
+
+
 # Citrix FileShare dependency
 Add-PSSnapin ShareFile
 
-#################################################################################################################################
+
+
 #################################################### CONSTANTS ##################################################################
-#################################################################################################################################
+
+
+
 #Credential path and initial processing location.
-$PROCESS_LOCATION = "\Scripts\PowerShell\Affiliate Scraping\";
+$PROCESS_LOCATION = "\path\where\script\is\located\and\temporary\directory\where\we\work\from";
 
-# Create the profile to automate this process.
-#$sfClient = New-SfClient -Name ((Join-Path D: $PROCESS_LOCATION) + "sweetser.sfps") -Account YourSubdomain
+$CLIENT_RECORDS_DESTINATION = '\path\to\client\records\directory';
 
-# Use the previously created profile to run this script.
-# Client Profile - The ASyncAffiliate Account.                                                                                                           #Change Build profile
-$sfClient = GET-SfClient -Name ((Join-Path D: $PROCESS_LOCATION) + "sweetser.sfps");
+# If we need to create the profile to automate this process. Then uncomment line below, before running the rest of the application.
+#$sfClient = New-SfClient -Name ((Join-Path D: $PROCESS_LOCATION) + "credentials.sfps") -Account YourSubdomain
 
-# Directory IDs.
-# FileShare directories
-$AFFILIATE_FOLDER = 'FOLDER-ID-FOR-RECREATING-AFILLIATE-FOLDER-STRUCTURE'; # directory for the affiliates.                                                              
-$ADMINISTRATIVE = 'FOLDER-ID-FOR-RECREATING-AFILLIATE-FOLDER-STRUCTURE'; # directory we are grabbing the administrative folders from                                   
+
+$sfClient = GET-SfClient -Name ((Join-Path D: $PROCESS_LOCATION) + "credentials.sfps");# Client Profile - The an Account on Citrix Fileshare.  Establish Session.
+
+
+$AFFILIATE_FOLDER = 'FOLDER-ID-HERE';                                                      
+$ADMINISTRATIVE = 'FOLDER-ID-HERE';                                
+
 
 # Path to FileShare admin and named directories, immediately after the /root/
-$FILESHARE_AFFILIATE_FOLDER_PATH = "/PATH/TO/AFFILIATE/FOLDER/";                                                                      
-$FILESHARE_ADMINISTRATIVE_PATH = "/PATH/TO/ADMIN/FOLDER/";                                                                    
+$FILESHARE_AFFILIATE_FOLDER_PATH = "/MAIN_FILE_SHARE_LOCATION/Affiliates";                                                                       
+$FILESHARE_ADMINISTRATIVE_PATH = "/MAIN_FILE_SHARE_LOCATION/Administrative";                                                                     
 
-# Destinations on server or local machine
-$DOWNLOAD_PATH = (Join-Path  D: $PROCESS_LOCATION); # root directory for the following three.                                                          
+
+# Destinations on server or local machine - not on citrix fileshare
+$DOWNLOAD_PATH = (Join-Path  D: $PROCESS_LOCATION); # root directory for the following three.                                                            
 $DOWNLOAD_TEMP_PATH = $DOWNLOAD_PATH + "temp"; # Stores the directories being processed by this script, temporarily, before the files get to the backup. 
-# Client Records
-$DOWNLOAD_PROCESSING = $DOWNLOAD_PATH + "Processing"; # Destination for all other paperwork to be processed                                              
-$DOWNLOAD_BACKUP_PATH = $DOWNLOAD_PATH + "Backup"; # Destination for backup - Client Records backup path                                                 
-# Admin
-$DOWNLOAD_ADMIN = $DOWNLOAD_PATH + "Administrative"; # Destination for administrative paperwork                                                          
-$DOWNLOAD_BACKUP_PATH_ADMIN = '\\server_name\path\for\Administrative\Backups'; # This is Jan's directory for admin backups.
+#Client Records 
+$DOWNLOAD_PROCESSING = $CLIENT_RECORDS_DESTINATION + "ShareFile Auto Sync"; # Destination for all other paperwork to be processed                                          
+$DOWNLOAD_BACKUP_PATH = $CLIENT_RECORDS_DESTINATION + "ShareFile Auto Sync Backup"; # Destination for backup - Client Records backup path                              
+#Admin 
+$DOWNLOAD_ADMIN = '\\server\Departments\AffiliateNetworkProcessing\Admin'; 
+$DOWNLOAD_BACKUP_PATH_ADMIN = '\\server\Departments\AffiliateNetworkProcessing\Backups';
 
-# CHANGE - We need a corresponding folder name for each parent that is being scraped - Because when we pull down all affiliates client records from their parent folder (Affiliates), the parent directory comes down too.
-$LOCAL_AFFILIATES = "\affiliates test";                                                                                                                 
-$LOCAL_ADMINISTRATIVE = "\Administrative test";                                                                                                         
 
-# Affiliate denoting variable. - There are clients that are not affiliates (who this script ought not to affect) and so we compare the company the user is in before we create their folders at the end of the script.
+$LOCAL_AFFILIATES = "\Affiliates";
+$LOCAL_ADMINISTRATIVE = "\Administrative";
 
-$LOG_PATH = "path\to\logging\error_logs.txt"; 
 
-#################################################################################################################################
+$LOG_PATH = (Join-Path  D: "$PROCESS_LOCATION\temp\") + "error_logs.txt"; 
+
+$DATE = Get-Date -Format yyyy-MM-dd" "hh_mm_ss; # The date.
+
+
+
+
+
 #################################################### FUNCTIONS ##################################################################
-#################################################################################################################################
+
+
 
 # Connect to the affiliate folders or their admin folders, just go to the parent folder and grab all of the folders inside.
 # Argument: $fromPath - For us this is either the administrative or the named parent folder on FileShare.
 # Argument: $destPath - For us this will be the same temporary folder ($tempPath)
 function getFilesFromShareFile($fromPath, $destPath) {
-
-    Write-Host "Connecting to ShareFile and syncing files..."; # could log this
+    # Cut / paste files from a sub-folder in ShareFile to a local temporary folder.
     try { 
         $ShareFileHomeFolder = "sfdrive:/" + (Send-SfRequest $sfClient -Entity Shares).Name + $fromPath;
+        
+        New-PSDrive -Name sfDrive -PSProvider ShareFile -Client $sfClient -Root "/" # Create a PowerShell provider for ShareFile at the location specified.
 
-        # Create a PowerShell provider for ShareFile at the location specified.
-        New-PSDrive -Name sfDrive -PSProvider ShareFile -Client $sfClient -Root "/" 
-
-        # Cut / paste files from a sub-folder in ShareFile to a local folder.
+        
         Sync-SfItem -ShareFilePath $ShareFileHomeFolder -Download -LocalPath $destPath -Recursive -Move   # -KeepFolders - include if we just wanted to copy and paste
-    }catch {
-        Add-Content $LOG_PATH "`nERROR cutting files from: {$fromPath} and sending to to: {$destPath}";
+    }
+    catch {
+        Add-Content $LOG_PATH "`nERROR on {$DATE} - Issue with a connection to the ShareFile. During our initial cut and paste of sharefile:{$fromPath} and pasting in the staging temp directory at:{$destPath}. Must cancel all processing.";
+        exit; 
     }
 
     # Cleanup - remove the PSProvider
-    Remove-PSDrive sfdrive
-
-    Write-Host "Closing connection to ShareFile and syncing files..."; # could log this
+    Remove-PSDrive sfdrive    
 }
 
 # Lets take a backup shot of the folder structure and files of a specific directory ($dirToBackup). We can handle two types of backing-up structures - 
 # affiliate named or admin folders. If we are backing up affiliates name (first iteration) we do not have a previous folder path (i.e. a folder already created with the
 # current date and time - $pathOfPreviousFolder), and so we must create one. The second iteration we have a path where we have already stored the affiliates named folders and so we are going to 
 # save the administrative folders structures in the same place as the named folders.
-#
 # Argument: $dirToBackup - Path to the directory we are backing up.
 # Argument: $backupDestinationPath - Path where we are dumping this backup.
-function takeBackupSnapshot($dirToBackup, $backupDestinationPath) {
-    Write-Host "`nTaking backup snapshot...";
-    #TROUBLESHOOTING - Write-Host "Backup path is: " + $backupPath; # Could log this
-    #TROUBLESHOOTING - Write-Host "DIrectory to backup: " + $dirToBackup; # Could log this
-
-        #TROUBLESHOOTING - Write-Host "Path of previous folder = false"; # Could log this if we wanted.
-
-    # Create a new sub-dir with the yyyy-MM-dd as the name.
-    $date = Get-Date -Format yyyy-MM-dd" "hh_mm_ss;
-    $date = $date.ToString();
+function takeBackupSnapshot($dirToBackup, $backupDestinationPath) 
+{   
     $newFolder = "${backupDestinationPath}\${date}";
-    #TROUBLESHOOTING - Write-Host "New folder is " + $newFolder; # Could log this if we wanted.
     
-    try {
-        # Create the new folder.
+    # Create the new folder.
+    try {        
         New-Item -ItemType Directory -Path $newFolder | Out-Null; # Out-Null = supress output from New-Item
-    } catch {
-        Add-Content $LOG_PATH "`nERROR Creating backup folder for : {$newFolder}"; #$A = Get-Date; Add-Content c:\scripts\*.log $A 
+    } 
+    catch {
+        Add-Content $LOG_PATH "`nERROR on {$DATE} - Creating backup folder for : {$newFolder}";
     }
 
     # Needed so that the script doesn't copy the $newFolder itself. 
     # This will allow it to only copy the contents of $dirToBackup
     $dirToBackup = $dirToBackup;
     
-    # Copy the all the files and their folders into this new folder we created or folder path we passed in as an argument.
+    # Copy all the files and their folders into this new folder we created or folder path we passed in as an argument.
     try {
         Copy-Item $dirToBackup $newFolder -Recurse;
-    } catch {
-        Add-Content $LOG_PATH "`nERROR Moving our backup: {$dirToBackup} to: {$newFolder}"; 
-    }
-    Write-Host "Backup snapshot complete.";
-
-    # Return for the second time we call this function, that way we have a reference to it.
-    #return $newFolder; # Do not need since we are using Jan's folder for this.
+    } 
+    catch {
+        Add-Content $LOG_PATH "`nERROR on {$DATE} - Moving our backup: {$dirToBackup} to: {$newFolder}"; 
+    }      
 }
 
-# We remove the folder Structure of a folder (so all the affiliates named or administrative folders from the temporary folder)
+
+# We remove the folder Structure of a folder (so all the affiliates named or administrative folders from the temporary staging folder)
 # Argument $pathToClean - is the source, the folder where all the affiliates folders are.
 # Argument $destination - is the destination we are dumping the affiliate files into, whether administrative (director of affiliates) or ASync (Client Records)
-function removeLocalFolderStructureAndMove($pathToClean, $destination) {
+function removeLocalFolderStructureAndMove($pathToClean, $destination) 
+{
     $files = Get-ChildItem -Path $pathToClean -Recurse
-
     foreach ($file in $files)
     {
         $currentFilePath = $file.FullName
@@ -143,7 +146,10 @@ function removeLocalFolderStructureAndMove($pathToClean, $destination) {
             try {
                 Copy-Item $currentFilePath $newFilePath -Recurse;
             }catch {
-                Add-Content $LOG_PATH "`nERROR Creating backup from: {$dirToBackup} to: {$backupDestinationPath}"; #$A = Get-Date; Add-Content c:\scripts\*.log $A 
+                #Add-Content $LOG_PATH "`nERROR Creating backup from: {$dirToBackup} to: {$backupDestinationPath} on {$date}"; #$A = Get-Date; Add-Content c:\scripts\*.log $A 
+                Add-Content $LOG_PATH "`nERROR {$DATE} - Removing local folder structure and moving files over for path arguments started as: FROM - {$pathToClean} TO - {$destination} ;;;; which resolves to being FROM - {$currentFilePath} TO -  {$newFilePath}"; #Adjusted on March 24 2016, I was getting messages for errors like: ERROR Creating backup from: {} to: {}
+
+
             }
             
         }
@@ -154,9 +160,11 @@ function removeLocalFolderStructureAndMove($pathToClean, $destination) {
     
 }
 
+
 # Make sure we return a unique file name.
 # Argument $filePath - the file and it's path, we will be appending randomized digits to its name if the name is not unique.
-function getUniqueFileName($filePath) {
+function getUniqueFileName($filePath) 
+{
     $fileNameNoExt = [System.IO.Path]::GetFileNameWithoutExtension($filePath)
 
     if (Test-Path $filePath)
@@ -182,114 +190,110 @@ function getUniqueFileName($filePath) {
         return $fileNameNoExt
     }
 }
+
+
 # We build two types of folder structures, affiliate named folder structures in the affiliate folder (on fileshare), or we create the affiliate admin folder structures in the administrative folder (on fileshare).
 # Argument $parentFolderId - the Id of the folder we are inserting all the affiliate folders into
 # Argument $admin - Boolean, if this is $admin folder structure or just regular named affiliate folder structure.
-function recreateAffiliateFolders($parentFolderId, $isAdmin) {
+function recreateAffiliateFolders($parentFolderId, $isAdmin) 
+{
     # Grab the pool of clients.
     $sfUsers = Send-SfRequest -Client $sfClient -Entity Accounts/Clients;
 
+    # Lets set a value as a placeholder incase we have to log.
+    if ($isAdmin) {
+        $folderOwner = "Administrative";
+    }
+    else {
+        $folderOwner = "Affiliate";                  
+    }
+    
+    # Iterate over each user and make their folder, if they have 'companyName' in their company field.
     foreach ($sfUserId in $sfUsers) {
-        # Need more details on the user, so we are expanding on the security.
-        $sfUser = Send-SfRequest -Client $sfClient -Entity Users -Id $sfUserId.Id -Expand Security
         
-        # Grab the Company the user belongs to.
-        $company = $sfUser.Company.ToLower();
-        $isConfirmed = $sfUser.IsConfirmed;
-        
-        # If domain == sweetser, then create a new directory for the affiliate.
-        if ($company -eq 'sweetser' -and $isConfirmed) {
+        $sfUser = Send-SfRequest -Client $sfClient -Entity Users -Id $sfUserId.Id -Expand Security # Need more details on the user, so we are expanding on the security.
+                
+        $company = $sfUser.Company.ToLower();        
+
+        if ($company -match 'company_name') { #regEX
             
-            # Get the names
             $firstName = $sfUser.FirstName;
             $lastName = $sfUser.LastName;
             $lastFirst = $lastName + ", " + $firstName;
             $clientDocsNamingConvention = " Client Docs";
             $adminDocsNamingConvention = " Admin Docs";
-
-            #Write-Output("We got a sweetser Company individual! User with the name: " + $firstName + " Belongs to company: " + $company);
-            
-         
-            
-            # Check if we are making affiliate named or adminstrative folders.
+                      
+            # Make affiliate or adminstrative folders.
             if ($isAdmin) {
-                # Create folder object
                 $folderInfo ='{
                     "Name":"'+ $lastFirst + $adminDocsNamingConvention +'", 
                     "Description":"This is your administrative folder. Put all administrative documentation in here."
                 }';
             
             }
-            else {
-                # Create folder object
+            else {                
                 $folderInfo ='{
                     "Name":"'+$lastFirst + $clientDocsNamingConvention + '", 
                     "Description":"This is your named affiliate folder. Put all consultation documentation in here."
                 }';
             }
-         
-            
-            # Use folder object and create the folder. 
+                     
+            # Use folder object and create the folder.
             $folder = Send-SfRequest -Client $sfClient -Entity Items -Method POST -Id $parentFolderId -Navigation Folder -BodyText $folderInfo
             
-            if(!$folder) { 
-                Add-Content $LOG_PATH "`nERROR Creating issue: for affiliate {$lastFirst}"; #$A = Get-Date; Add-Content c:\scripts\*.log $A 
+            # issue with creating folder.
+            if (!$folder) {                 
+                Add-Content $LOG_PATH "`nERROR {$DATE} -Could not create the {$folderOwner} folder for affiliate {$lastFirst}. Probably means they already have a directory.";
             }
-                
-            
-            Write-Output($sfUser.Username); # Could log this if we wanted.
-
             # Create Access Control Object and send a Post request to the folder with a navigation to Access Controls.
-            #$userPrincipal = New-Object ShareFile.Api.Models.Principal
-            #$AccessControlEntry = New-Object ShareFile.Api.Models.AccessControl
+            else {               
+                
+                $userPrincipal = New-Object ShareFile.Api.Models.Principal
+                $AccessControlEntry = New-Object ShareFile.Api.Models.AccessControl
         
-            #$userPrincipal.Email = $sfUser.Username;
-            #$AccessControlEntry.Principal = $userPrincipal;
-            #$AccessControlEntry.CanDownload = $true;
-            #$AccessControlEntry.CanUpload = $true;
-            #$AccessControlEntry.CanDelete = $false;
-            #$AccessControlEntry.CanView = $true;
-            #Send-SfRequest -Client $CLIENT_CREDS -Method POST -Entity Items -Navigation AccessControls -Id $folder.Id -Body $AccessControlEntry 
+                $userPrincipal.Email = $sfUser.Username;
+                $AccessControlEntry.Principal = $userPrincipal;
+                $AccessControlEntry.CanDownload = $true;
+                $AccessControlEntry.CanUpload = $true;
+                $AccessControlEntry.CanDelete = $false;
+                $AccessControlEntry.CanView = $true;
+                Send-SfRequest -Client $sfClient -Method POST -Entity Items -Navigation AccessControls -Id $folder.Id -Body $AccessControlEntry
+            }         
         }    
     }
 } 
 
-#################################################################################################################################
+
+
+
+
 #################################################### MAIN #######################################################################
-#################################################################################################################################
 
 
-#### Affiliates Named folder scraping.
 
-# FILESHARE - Grab All affiliate folders then storing them into $tempPath location.
+# FILESHARE - Grab All affiliate folders then store them into $tempPath location.
 getFilesFromShareFile $FILESHARE_AFFILIATE_FOLDER_PATH $DOWNLOAD_TEMP_PATH;
+
+
 
 # LOCAL - Backup all Affiliate folders.
 $tempPathAfterDownload = $DOWNLOAD_TEMP_PATH + $LOCAL_AFFILIATES; # We have to append the name of the folder we pulled this from on fileshare, because the structure we pulled down is in this sub folder now.
+
 takeBackupSnapshot $tempPathAfterDownload $DOWNLOAD_BACKUP_PATH ; # not an admin backup so we pass false
 
-# LOCAL - Remove the sub folder structure and move the files into the Processing folder for Client Records.
-removeLocalFolderStructureAndMove $tempPathAfterDownload $DOWNLOAD_PROCESSING;
+removeLocalFolderStructureAndMove $tempPathAfterDownload $DOWNLOAD_PROCESSING; # LOCAL - Remove the sub folder structure and move the files into the Processing folder for Client Records.
 
-# FILESHARE - Recreate the affiliate's named folders.
-recreateAffiliateFolders $AFFILIATE_FOLDER $false; 
+recreateAffiliateFolders $AFFILIATE_FOLDER $false; # FILESHARE - Recreate the affiliate's named folders.
 
 
-#########################################################################################################
 
 ### Affiliates Administrative folder scraping.
+getFilesFromShareFile $FILESHARE_ADMINISTRATIVE_PATH $DOWNLOAD_ADMIN; # FILESHARE - Grab all Administrative folders.
 
-# FILESHARE - Grab all Administrative folders.
-getFilesFromShareFile $FILESHARE_ADMINISTRATIVE_PATH $DOWNLOAD_ADMIN;
+$tempPathAfterDownload = $DOWNLOAD_ADMIN + $LOCAL_ADMINISTRATIVE; # LOCAL - Backup the Administrative folders.
 
-# LOCAL - Backup the Administrative folders.
-$tempPathAfterDownload = $DOWNLOAD_ADMIN + $LOCAL_ADMINISTRATIVE;
 takeBackupSnapshot $tempPathAfterDownload $DOWNLOAD_BACKUP_PATH_ADMIN; # backed up working good
 
-# LOCAL - Remove the sub folder structure and move the administrative files into director of affiliates directory
-removeLocalFolderStructureAndMove $tempPathAfterDownload $DOWNLOAD_ADMIN;
+removeLocalFolderStructureAndMove $tempPathAfterDownload $DOWNLOAD_ADMIN; # LOCAL - Remove the sub folder structure and move the administrative files into director of affiliates directory
 
-# FILESHARE - Recreate the affiliate's named folders.
-recreateAffiliateFolders $ADMINISTRATIVE $true; 
-
-#TROUBLESHOOTING Write-Output "Done"; # Could log this
+recreateAffiliateFolders $ADMINISTRATIVE $true; # FILESHARE - Recreate the affiliate's named folders.
